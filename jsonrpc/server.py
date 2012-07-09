@@ -30,278 +30,223 @@
 #  SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #
 #
-import traceback
+
 import jsonrpc.jsonutil
 from jsonrpc.utilities import public
 import jsonrpc.common
 
-# Twisted imports
-from twisted.web import server
-from twisted.internet import threads
-from twisted.internet import defer
-from twisted.web.resource import Resource
-
-import abc
+from BaseHTTPServer import BaseHTTPRequestHandler
 
 import copy
 import UserDict, collections
 collections.Mapping.register(UserDict.DictMixin)
 
+
 @public
 class ServerEvents(object):
-	'''Subclass this and pass to :py:meth:`JSON_RPC.customize` to customize the JSON-RPC server'''
+    '''Subclass this and pass to :py:meth:`JSON_RPC.customize` to customize
+       the JSON-RPC server.
+    '''
 
-	DEBUG = False
+    DEBUG = False
 
-	#: an object defining a 'get' method which contains the methods
-	methods = None
+    #: an object defining a 'get' method which contains the methods
+    methods = None
 
-	def __init__(self, server):
-		#: A link to the JSON-RPC server instance
-		self.server = server
+    def __init__(self, server):
+        #: A link to the JSON-RPC server instance
+        self.server = server
 
-	def callmethod(self, txrequest, rpcrequest, **extra):
-		'''Find the method and call it with the specified args
+    def callmethod(self, rpcrequest, **extra):
+        '''Find the method and call it with the specified args
 
-		:returns: the result of the method'''
+        :returns: the result of the method
+        '''
 
-		extra.update(rpcrequest.kwargs)
+        extra.update(rpcrequest.kwargs)
 
-		method, postprocess_result = self.findmethod(rpcrequest.method, rpcrequest.args, extra), False
-		if hasattr('method', '__iter__'):
-			method, postprocess_result = method
+        method = self.findmethod(rpcrequest.method, rpcrequest.args, extra)
+        postprocess_result = False
+        if hasattr('method', '__iter__'):
+            method, postprocess_result = method
 
-		if self.DEBUG:
-			# Debugging: raise AssertionError if type of method is invalid
-			assert method is None or callable(method), 'the returned method is not callable'
+        if self.DEBUG:
+            # Debugging: raise AssertionError if type of method is invalid
+            assert method is None or callable(method),\
+                            'the returned method is not callable'
 
-		if not callable(method): raise jsonrpc.common.MethodNotFound
+        if not callable(method):
+            raise jsonrpc.common.MethodNotFound
 
-		result = method(*rpcrequest.args, **extra)
+        result = method(*rpcrequest.args, **extra)
 
-		#if the result needs to be adjusted/validated, do it
-		if postprocess_result:
-			result = self.methods.postprocess(rpcrequest.method, result, rpcrequest.args, extra)
+        #if the result needs to be adjusted/validated, do it
+        if postprocess_result:
+            result = self.methods.postprocess(rpcrequest.method, result,
+                                              rpcrequest.args, extra)
 
-		return result
+        return result
 
-	def findmethod(self, method_name, args=None, kwargs=None):
-		'''Return the callable associated with the method name
+    def findmethod(self, method_name, args=None, kwargs=None):
+        '''Return the callable associated with the method name
 
-		:returns: a callable or None if the method is not found'''
-		if self.methods is not None:
-			return self.methods.get(method_name)
-		else:
-			raise NotImplementedError
+        :returns: a callable or None if the method is not found
+        '''
 
-	def processrequest(self, result, args, **kw):
-		'''Override to implement custom handling of the method result and request'''
-		return result
+        if self.methods is not None:
+            return self.methods.get(method_name)
+        else:
+            raise NotImplementedError
 
-	def log(self, response, txrequest, error=False):
-		'''Override to implement custom logging'''
-		pass
+    def processrequest(self, result, **kw):
+        '''Override to implement custom handling of the method result and request'''
 
-	def processcontent(self, content, request):
-		'''Given the freshly decoded content of the request, return the content that should be used
+        return result
 
-		:returns: an object which implements the :py:class:`collections.MutableMapping` interface'''
-		return content
+    def log(self, response, txrequest, error=False):
+        '''Override to implement custom logging'''
 
-	def getresponsecode(self, result):
-		'''Take the result, and return an appropriate HTTP response code, returns 200 by default
+        pass
 
-		NOTE: if an error code is returned, the client error messages will be much less helpful!
+    def processcontent(self, content):
+        '''Given the freshly decoded content of the request, return the content
+           that should be used.
 
-		for example
+        :returns: an object which implements the
+                  :py:class:`collections.MutableMapping` interface
+        '''
 
-			def getresponsecode(self, result):
-				code = 200
-				if not isinstance(result, list):
-					if result is not None and result.error is not None:
-						code = result.error.code or 500
-				return code
+        return content
+
+    def getresponsecode(self, result):
+        '''Take the result, and return an appropriate HTTP response code,
+           returns 200 by default.
+
+        NOTE: if an error code is returned, the client error messages will be
+              much less helpful!
+
+        for example
+
+            def getresponsecode(self, result):
+                code = 200
+                if not isinstance(result, list):
+                    if result is not None and result.error is not None:
+                        code = result.error.code or 500
+                return code
 
 
-		:returns: :py:class:`int`'''
-		# returns 200 so that the python client can see something useful
-		return 200
+        :returns: :py:class:`int`
+        '''
 
-	def defer(self, method, *a, **kw):
-		'''Defer to thread. Override this method if you are using a different ThreadPool, or if you want to return immediately.
-
-		:returns: :py:class:`twisted.internet.defer.Deferred`'''
-		return threads.deferToThread(method, *a, **kw)
-
-	def defer_with_rpcrequest(self, method, rpcrequest, *a, **kw):
-		d = self.defer(method, rpcrequest, *a, **kw)
-
-		@d.addCallback
-		def _inner(result):
-			return result, rpcrequest
-		@d.addErrback
-		def _inner(result):
-			result.rpcrequest = rpcrequest
-			return result
-
-		return d
-
+        # returns 200 so that the python client can see something useful
+        return 200
 
 
 ## Base class providing a JSON-RPC 2.0 implementation with 2 customizable hooks
 @public
-class JSON_RPC(Resource):
-	'''This class implements a JSON-RPC 2.0 server as a Twisted Resource'''
-	isLeaf = True
+class JSON_RPC(BaseHTTPRequestHandler):
+    '''This class implements a JSON-RPC 2.0 server'''
 
-	### NOTE: these comments are used by Sphinx as documentation.
-	#: An instance of :py:class:`ServerEvents` which supplies callbacks to
-	#: customize the operation of the server.  The proper way to initialize this
-	#: is either to subclass and set it manually, or, preferably, to call :py:meth:`customize`.
-	eventhandler = ServerEvents
+    ### NOTE: these comments are used by Sphinx as documentation.
+    #: An instance of :py:class:`ServerEvents` which supplies callbacks to
+    #: customize the operation of the server.  The proper way to initialize this
+    #: is either to subclass and set it manually, or, preferably, to call
+    #: :py:meth:`customize`.
+    eventhandler = ServerEvents
 
-	def customize(self, eventhandler):
-		'''customize the behavior of the server'''
-		self.eventhandler = eventhandler(self)
-		return self
+    @classmethod
+    def customize(cls, eventhandler):
+        '''customize the behavior of the server'''
 
+        cls.eventhandler = eventhandler(cls)
+        return cls
 
-	def __init__(self, *args, **kwargs):
-		self.customize(self.eventhandler)
-		Resource.__init__(self,*args, **kwargs)
+    def log_request(self, code, size=None):
+        '''Overriden method from BaseHTTPRequestHandler to reduce logmessages'''
 
+    def do_POST(self):
+        self.request = "<{0} {1} {2}>".format(self.command, self.path,
+                                                    self.request_version)
+        result = []
+        contents = None
+        try:
+            length = int(self.headers.getheader('content-length'))
+            try:
+                contents = jsonrpc.jsonutil.decode(self.rfile.read(length))
+            except ValueError:
+                raise jsonrpc.common.ParseError
 
-	def render(self, request):
-		result = ''
-		request.content.seek(0, 0)
-		try:
-			try:
-				content = jsonrpc.jsonutil.decode(request.content.read())
-			except ValueError:
-				self.eventhandler.log(None, request, True)
-				raise jsonrpc.common.ParseError
+            islist = (True if isinstance(contents, list) else False)
+            if not islist:
+                contents = [contents]
 
-			content = self.eventhandler.processcontent(content, request)
+            if contents == []:
+                raise jsonrpc.common.InvalidRequest
 
-			content = jsonrpc.common.Request.from_json(content)
+            contents = self.eventhandler.processcontent(contents)
+            contents = jsonrpc.common.Request.from_json(contents)
+            for item in contents:
+                try:
+                    item.check()
+                except BaseException, exc:
+                    # Save error and process other items when doing a batchcall
+                    if islist:
+                        exc = self.render_error(exc, item.id)
+                        result.append(exc)
+                        continue
+                    # Let the top handler catch this on a single call
+                    raise
 
-			try:
-				if hasattr(content, 'check'):
-					content.check()
-				else:
-					for item in content: item.check()
+            def callmethod(rpcrequest, add, **kwargs):
+                add.update(kwargs)
+                result = self.eventhandler.callmethod(rpcrequest, **add)
+                return result
 
-			except jsonrpc.common.RPCError, e:
-				self._ebRender(e, request, content.id if hasattr(content, 'id') else None)
+            for rpcrequest in contents:
+                try:
+                    add = copy.deepcopy(rpcrequest.extra)
+                    methodresult = callmethod(rpcrequest, add)
+                    res = jsonrpc.common.Response(id=rpcrequest.id,
+                                                  result=methodresult)
+                    res = self.eventhandler.processrequest(res)
+                    if res.id is not None:
+                        result.append(res)
+                except BaseException, exc:
+                    exc = self.render_error(exc, rpcrequest.id)
+                    result.append(exc)
+                    continue
 
-			else:
-				d = self._action(request, content)
-				d.addCallback(self._cbRender, request)
-				d.addErrback(self._ebRender, request, content.id if hasattr(content, 'id') else None)
-		except BaseException, e:
-			self._ebRender(e, request, None)
+            if result != []:
+                if not islist:
+                    result = result[0]
+            else:
+                result = None
+        except (BaseException, jsonrpc.common.RPCError), exc:
+            if contents is None or contents == []:
+                errid = None
+            elif hasattr(contents, 'id'):
+                errid = contents.id
+            elif hasattr(contents[0], 'id'):
+                errid = contents[0].id
 
-		return server.NOT_DONE_YET
+            err = self.render_error(exc, errid)
+            self.response(err, True)
+        else:
+            self.response(result, False)
 
+    def response(self, resp, error):
+        code = self.eventhandler.getresponsecode(resp)
+        self.send_response(code)
+        self.eventhandler.log(resp, self.request, error=error)
 
+        result = jsonrpc.jsonutil.encode(resp).encode('utf-8')
+        self.send_header("content-type", 'application/json')
+        self.send_header("content-length", len(result))
+        self.end_headers()
+        self.wfile.write(result)
 
-	def _action(self, request, contents, **kw):
-		result = []
-
-		islist = (True if isinstance(contents, list) else False)
-		if not islist: contents = [contents]
-
-		if contents == []: raise jsonrpc.common.InvalidRequest
-
-		def callmethod(rpcrequest, request, add, **kwargs):
-			add.update(kwargs)
-			result = self.eventhandler.callmethod(request, rpcrequest, **add)
-			return result
-
-		deferreds = []
-		for rpcrequest in contents:
-			res = None
-			add = copy.deepcopy(rpcrequest.extra)
-			add.update(kw)
-			deferreds.append(self.eventhandler.defer_with_rpcrequest(callmethod, rpcrequest, request, add))
-		deferreds = defer.DeferredList(deferreds, consumeErrors=True)
-
-		@deferreds.addCallback
-		def helper(deferredresults):
-			result = []
-			try:
-				for success, methodresult in deferredresults:
-					res = None
-					if success:
-						methodresult, rpcrequest = methodresult
-						res = jsonrpc.common.Response(id=rpcrequest.id, result=methodresult)
-						res = self.eventhandler.processrequest(res, request.args, **kw)
-					else:
-						rpcrequest = methodresult.rpcrequest
-						try:
-							methodresult.raiseException()
-						except Exception, e:
-							res = self.render_error(e, rpcrequest.id)
-							self.eventhandler.log(res, request, error=True)
-
-					if res.id is not None:
-						result.append(res)
-			except Exception, e:
-				traceback.print_exc()
-				raise
-
-			if result != []:
-				if not islist: result = result[0]
-			else: result = None
-			return result
-
-		return deferreds
-
-
-	def _cbRender(self, result, request):
-		@self.eventhandler.defer
-		def _inner(*args, **_):
-			code = self.eventhandler.getresponsecode(result)
-			request.setResponseCode(code)
-			self.eventhandler.log(result, request, error=False)
-			if result is not None:
-				request.setHeader("content-type", 'application/json')
-				result_ = jsonrpc.jsonutil.encode(result).encode('utf-8')
-				request.setHeader("content-length", len(result_))
-				request.write(result_)
-			request.finish()
-		return _inner
-
-	def _ebRender(self, result, request, id, finish=True):
-		@self.eventhandler.defer
-		def _inner(*args, **_):
-			err = None
-			if not isinstance(result, BaseException):
-				try: result.raiseException()
-				except BaseException, e:
-					err = e
-					self.eventhandler.log(err, request, error=True)
-			else: err = result
-			err = self.render_error(err, id)
-
-			code = self.eventhandler.getresponsecode(result)
-			request.setResponseCode(code)
-
-			request.setHeader("content-type", 'application/json')
-			result_ = jsonrpc.jsonutil.encode(err).encode('utf-8')
-			request.setHeader("content-length", len(result_))
-			request.write(result_)
-			if finish: request.finish()
-		return _inner
-
-	def render_error(self, e, id):
-		if isinstance(e, jsonrpc.common.RPCError):
-			err = jsonrpc.common.Response(id=id, error=e)
-		else:
-			err = jsonrpc.common.Response(id=id, error=dict(code=0, message=str(e), data=e.args))
-
-		return err
-
-
-
+    def render_error(self, e, id):
+        err = (e if isinstance(e, jsonrpc.common.RPCError) else
+                        dict(code=0, message=str(e), data=e.args))
+        return jsonrpc.common.Response(id=id, error=err)
 
