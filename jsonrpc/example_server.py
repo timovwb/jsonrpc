@@ -57,15 +57,17 @@ class ExampleServer(ServerEvents):
 
     # helper methods
     methods = set(['add', 'subtract', 'echo'])
+
     def _get_msg(self, response):
         print('response', repr(response))
-        return ' '.join(str(x) for x in [response.id, response.result or response.error])
+        return ' '.join(str(x) for x in
+                            [response.id, response.result or response.error])
 
     def subtract(self, a, b):
-        return a-b
+        return a - b
 
     def add(self, a, b):
-        return a+b
+        return a + b
 
     def echo(self, v):
         return v
@@ -85,4 +87,3 @@ try:
     httpd.serve_forever()
 except KeyboardInterrupt:
     httpd.server_close()
-

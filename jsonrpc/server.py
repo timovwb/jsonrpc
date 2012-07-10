@@ -45,7 +45,7 @@ collections.Mapping.register(UserDict.DictMixin)
 @public
 class ServerEvents(object):
     '''Subclass this and pass to :py:meth:`JSON_RPC.customize` to customize
-       the JSON-RPC server.
+    the JSON-RPC server.
     '''
 
     DEBUG = False
@@ -110,7 +110,7 @@ class ServerEvents(object):
 
     def processcontent(self, content):
         '''Given the freshly decoded content of the request, return the content
-           that should be used.
+        that should be used.
 
         :returns: an object which implements the
                   :py:class:`collections.MutableMapping` interface
@@ -120,7 +120,7 @@ class ServerEvents(object):
 
     def getresponsecode(self, result):
         '''Take the result, and return an appropriate HTTP response code,
-           returns 200 by default.
+        returns 200 by default.
 
         NOTE: if an error code is returned, the client error messages will be
               much less helpful!
@@ -249,4 +249,3 @@ class JSON_RPC(BaseHTTPRequestHandler):
         err = (e if isinstance(e, jsonrpc.common.RPCError) else
                         dict(code=0, message=str(e), data=e.args))
         return jsonrpc.common.Response(id=id, error=err)
-
