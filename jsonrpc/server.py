@@ -168,6 +168,7 @@ class JSON_RPC(BaseHTTPRequestHandler):
         self.request = "<{0} {1} {2}>".format(self.command, self.path,
                                                     self.request_version)
         result = []
+        errors = False
         contents = None
         try:
             length = int(self.headers.getheader('content-length'))
@@ -193,6 +194,7 @@ class JSON_RPC(BaseHTTPRequestHandler):
                     if islist:
                         exc = self.render_error(exc, item.id)
                         result.append(exc)
+                        errors = True
                         continue
                     # Let the top handler catch this on a single call
                     raise
@@ -212,8 +214,9 @@ class JSON_RPC(BaseHTTPRequestHandler):
                     if res.id is not None:
                         result.append(res)
                 except BaseException, exc:
-                    exc = self.render_error(exc, rpcrequest.id)
-                    result.append(exc)
+                    err = self.render_error(exc, rpcrequest.id)
+                    result.append(err)
+                    errors = True
                     continue
 
             if result != []:
@@ -232,7 +235,7 @@ class JSON_RPC(BaseHTTPRequestHandler):
             err = self.render_error(exc, errid)
             self.response(err, True)
         else:
-            self.response(result, False)
+            self.response(result, errors)
 
     def response(self, resp, error):
         code = self.eventhandler.getresponsecode(resp)
