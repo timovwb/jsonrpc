@@ -31,13 +31,14 @@
 #
 #
 
-import cookielib
-import urllib2
-import urlparse
+import http.cookiejar
+import urllib.request
+import urllib.parse
 import random
 import time
-import UserDict, collections
-collections.Mapping.register(UserDict.DictMixin)
+#TODO Py3k: Userdict has no DictMixin (http://bugs.python.org/issue2876)
+#import collections
+#collections.Mapping.register(collections.UserDict.DictMixin)
 
 from hashlib import sha1
 import jsonrpc.jsonutil
@@ -57,20 +58,20 @@ class NewStyleBaseException(Exception):
     message = property(_get_message, _set_message)
 
 
-class IDGen(object):
+class IDGen:
     def __init__(self):
         self._hasher = sha1()
         self._id = 0
 
     def __get__(self, *_, **__):
         self._id += 1
-        self._hasher.update(str(self._id))
-        self._hasher.update(time.ctime())
-        self._hasher.update(str(random.random))
+        self._hasher.update(str(self._id).encode('utf-8'))
+        self._hasher.update(time.ctime().encode('utf-8'))
+        self._hasher.update(str(random.random).encode('utf-8'))
         return self._hasher.hexdigest()
 
 
-class ProxyEvents(object):
+class ProxyEvents:
     '''An event handler for JSONRPCProxy'''
 
     #: an instance of a class which defines a __get__ method, used to
@@ -98,7 +99,7 @@ class ProxyEvents(object):
         return data
 
 
-class JSONRPCProcessor(urllib2.BaseHandler):
+class JSONRPCProcessor(urllib.request.BaseHandler):
     def __init__(self):
         self.handler_order = 100
 
@@ -107,9 +108,10 @@ class JSONRPCProcessor(urllib2.BaseHandler):
         request.add_header('user-agent', 'jsonrpc/'+__version__)
         return request
 
-	https_request = http_request
+    https_request = http_request
 
-class JSONRPCProxy(object):
+
+class JSONRPCProxy:
     '''A class implementing a JSON-RPC Proxy.
 
     :param str host: The HTTP server hosting the JSON-RPC server
@@ -141,7 +143,7 @@ class JSONRPCProxy(object):
     @classmethod
     def from_url(cls, url, ctxid=None, serviceName=None):
         '''Create a JSONRPCProxy from a URL'''
-        urlsp = urlparse.urlsplit(url)
+        urlsp = urllib.parse.urlsplit(url)
         url = '{0}://{1}'.format(urlsp.scheme, urlsp.netloc)
         path = urlsp.path
         if urlsp.query:
@@ -157,8 +159,8 @@ class JSONRPCProxy(object):
         self.serviceURL, self._path = self._transformURL(host, path)
         self.customize(self._eventhandler)
 
-        cj = cookielib.CookieJar()
-        self._opener = urllib2.build_opener(urllib2.HTTPCookieProcessor(cj))
+        cj = http.cookiejar.CookieJar()
+        self._opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(cj))
         self._opener.add_handler(JSONRPCProcessor())
 
     def _set_opener(self, opener):
@@ -188,9 +190,9 @@ class JSONRPCProxy(object):
 
     def __call__(self, *args, **kwargs):
         url = self._get_url()
-        postdata = self._get_postdata(args, kwargs)
+        postdata = self._get_postdata(args, kwargs).encode("utf-8")
         #respdata = urllib2.urlopen(url, postdata).read()
-        respdata = self._post(url, postdata).read()
+        respdata = self._post(url, postdata).read().decode("utf-8")
         resp = Response.from_dict(jsonrpc.jsonutil.decode(respdata))
         resp = self._eventhandler.proc_response(resp)
 
@@ -215,8 +217,8 @@ class JSONRPCProxy(object):
         if hasattr(methods, 'items'):
             methods = methods.items()
         data = [getattr(self, k)._get_postdata(*v) for k, v in methods]
-        postdata = '[{0}]'.format(','.join(data))
-        respdata = self._post(self._get_url(), postdata).read()
+        postdata = '[{0}]'.format(','.join(data)).encode("utf-8")
+        respdata = self._post(self._get_url(), postdata).read().decode("utf-8")
         resp = Response.from_json(respdata)
         try:
             result = resp.get_result()

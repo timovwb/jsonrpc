@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 
 
-import urllib2
+import urllib.request
 import unittest
 
 import jsonrpc.jsonutil
@@ -12,14 +12,16 @@ URL = "http://localhost:%s/jsonrpc" % PORT
 
 
 def send_json(url, data):
-    respdata = urllib2.urlopen(url, data).read()
+    data = data.encode("utf-8")
+    respdata = urllib.request.urlopen(url, data).read()
+    respdata = respdata.decode("utf-8")
     result = jsonrpc.jsonutil.decode(respdata)
     return result
 
 
 class TestJSONRPCServer(unittest.TestCase):
     def setUp(self):
-        self.id_ = 'an_id'
+        self.id_ = "an_id"
         self.param = "some data"
         self.batchcall_data = (
             '[{"jsonrpc": "2.0", "params": [1, 2], "method": "add", "id": "1"},'
@@ -145,7 +147,7 @@ class TestJSONRPCServer(unittest.TestCase):
 
     def test_batchcall_1err_5(self):
         result = send_json(URL, self.batchcallerr_data)
-        self.assertEqual(len(filter(None, [x.get('error') for x in result])), 1)
+        self.assertEqual(len([_f for _f in [x.get('error') for x in result] if _f]), 1)
 
     def test_batchcall_emptylist(self):
         data = '[]'

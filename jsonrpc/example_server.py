@@ -1,4 +1,3 @@
-from __future__ import print_function
 #
 #  Copyright (c) 2011 Edward Langley
 #  All rights reserved.
@@ -32,8 +31,8 @@ from __future__ import print_function
 #
 #
 
-from SocketServer import ThreadingMixIn
-from BaseHTTPServer import HTTPServer
+from socketserver import ThreadingMixIn
+from http.server import HTTPServer
 
 from jsonrpc.server import ServerEvents, JSON_RPC
 
@@ -59,7 +58,6 @@ class ExampleServer(ServerEvents):
     methods = set(['add', 'subtract', 'echo'])
 
     def _get_msg(self, response):
-        print('response', repr(response))
         return ' '.join(str(x) for x in
                             [response.id, response.result or response.error])
 

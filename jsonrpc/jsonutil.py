@@ -1,4 +1,3 @@
-from __future__ import print_function
 #
 #  Copyright (c) 2011 Edward Langley
 #  All rights reserved.
@@ -74,9 +73,9 @@ def safe_encode(obj):
 def encode_(obj, **kw):
     obj = getattr(obj, 'json_equivalent', lambda: obj)()
     func = lambda x: x
-    if hasattr(obj, 'items'):
+    if isinstance(obj, dict):
         func = dict_encode
-    elif hasattr(obj, '__iter__'):
+    elif isinstance(obj, list):
         func = list_encode
     else:
         func = safe_encode

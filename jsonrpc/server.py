@@ -35,15 +35,16 @@ import jsonrpc.jsonutil
 from jsonrpc.utilities import public
 import jsonrpc.common
 
-from BaseHTTPServer import BaseHTTPRequestHandler
+from http.server import BaseHTTPRequestHandler
 
 import copy
-import UserDict, collections
-collections.Mapping.register(UserDict.DictMixin)
+import collections
+#TODO Py3k: Userdict has no DictMixin (http://bugs.python.org/issue2876)
+#collections.Mapping.register(collections.UserDict.DictMixin)
 
 
 @public
-class ServerEvents(object):
+class ServerEvents:
     '''Subclass this and pass to :py:meth:`JSON_RPC.customize` to customize
     the JSON-RPC server.
     '''
@@ -67,15 +68,15 @@ class ServerEvents(object):
 
         method = self.findmethod(rpcrequest.method, rpcrequest.args, extra)
         postprocess_result = False
-        if hasattr('method', '__iter__'):
+        if isinstance(method, list):
             method, postprocess_result = method
 
         if self.DEBUG:
             # Debugging: raise AssertionError if type of method is invalid
-            assert method is None or callable(method),\
+            assert method is None or isinstance(method, collections.Callable),\
                             'the returned method is not callable'
 
-        if not callable(method):
+        if not isinstance(method, collections.Callable):
             raise jsonrpc.common.MethodNotFound
 
         result = method(*rpcrequest.args, **extra)
@@ -171,9 +172,9 @@ class JSON_RPC(BaseHTTPRequestHandler):
         errors = False
         contents = None
         try:
-            length = int(self.headers.getheader('content-length'))
+            length = int(self.headers['content-length'])
             try:
-                contents = jsonrpc.jsonutil.decode(self.rfile.read(length))
+                contents = jsonrpc.jsonutil.decode(self.rfile.read(length).decode("utf-8"))
             except ValueError:
                 raise jsonrpc.common.ParseError
 
@@ -189,7 +190,7 @@ class JSON_RPC(BaseHTTPRequestHandler):
             for item in contents:
                 try:
                     item.check()
-                except BaseException, exc:
+                except BaseException as exc:
                     # Save error and process other items when doing a batchcall
                     if islist:
                         exc = self.render_error(exc, item.id)
@@ -213,7 +214,7 @@ class JSON_RPC(BaseHTTPRequestHandler):
                     res = self.eventhandler.processrequest(res)
                     if res.id is not None:
                         result.append(res)
-                except BaseException, exc:
+                except BaseException as exc:
                     err = self.render_error(exc, rpcrequest.id)
                     result.append(err)
                     errors = True
@@ -224,7 +225,7 @@ class JSON_RPC(BaseHTTPRequestHandler):
                     result = result[0]
             else:
                 result = None
-        except (BaseException, jsonrpc.common.RPCError), exc:
+        except (BaseException, jsonrpc.common.RPCError) as exc:
             if contents is None or contents == []:
                 errid = None
             elif hasattr(contents, 'id'):
