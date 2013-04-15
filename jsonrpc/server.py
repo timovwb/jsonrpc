@@ -144,7 +144,7 @@ class ServerEvents(object):
 
 ## Base class providing a JSON-RPC 2.0 implementation with 2 customizable hooks
 @public
-class JSON_RPC(BaseHTTPRequestHandler):
+class JSON_RPC_Base:
     '''This class implements a JSON-RPC 2.0 server'''
 
     ### NOTE: these comments are used by Sphinx as documentation.
@@ -161,19 +161,15 @@ class JSON_RPC(BaseHTTPRequestHandler):
         cls.eventhandler = eventhandler(cls)
         return cls
 
-    def log_request(self, code, size=None):
-        '''Overriden method from BaseHTTPRequestHandler to reduce logmessages'''
-
-    def do_POST(self):
-        self.request = "<{0} {1} {2}>".format(self.command, self.path,
-                                                    self.request_version)
+    def handle_request(self, *args, **kwargs):
+        self.request_started(*args, **kwargs)
+        self.request = self.get_request_string()
         result = []
         errors = False
         contents = None
         try:
-            length = int(self.headers.getheader('content-length'))
             try:
-                contents = jsonrpc.jsonutil.decode(self.rfile.read(length))
+                contents = jsonrpc.jsonutil.decode(self.read_data())
             except ValueError:
                 raise jsonrpc.common.ParseError
 
@@ -232,23 +228,70 @@ class JSON_RPC(BaseHTTPRequestHandler):
             elif hasattr(contents[0], 'id'):
                 errid = contents[0].id
 
-            err = self.render_error(exc, errid)
-            self.response(err, True)
-        else:
-            self.response(result, errors)
+            result = self.render_error(exc, errid)
+            errors = True
 
-    def response(self, resp, error):
-        code = self.eventhandler.getresponsecode(resp)
-        self.send_response(code)
-        self.eventhandler.log(resp, self.request, error=error)
+        self.eventhandler.log(result, self.request, error=errors)
+        code = self.eventhandler.getresponsecode(result)
+        resp = jsonrpc.jsonutil.encode(result).encode('utf-8')
+        self.write_data(code, resp)
 
-        result = jsonrpc.jsonutil.encode(resp).encode('utf-8')
-        self.send_header("content-type", 'application/json')
-        self.send_header("content-length", len(result))
-        self.end_headers()
-        self.wfile.write(result)
+        self.request_finished()
 
     def render_error(self, e, id):
         err = (e if isinstance(e, jsonrpc.common.RPCError) else
                         dict(code=0, message=str(e), data=e.args))
         return jsonrpc.common.Response(id=id, error=err)
+
+    # The following methods can be overridden in the subclass
+    def request_started(self, *args, **kwargs):
+        """ Called at the start of each request """
+        pass
+
+    def request_finished(self):
+        """ Called at the end of each request """
+        pass
+
+    # The following methods *must* be overridden in the subclass
+    def get_request_string(self):
+        """ Create a request string. This should look like:
+                <HTTP_method path HTTP_version>
+                Example: <POST /jsonrpc HTTP/1.1>
+        """
+        raise NotImplementedError
+
+    def read_data(self):
+        """ Read the incoming data """
+        raise NotImplementedError
+
+    def write_data(self, code, result):
+        """ Send back a response. This should include the following steps:
+                - Send the repsonse code
+                - Send the content-type header (application/json)
+                - Send the result
+        """
+        raise NotImplementedError
+
+
+class JSON_RPC(JSON_RPC_Base, BaseHTTPRequestHandler):
+    """ A ready to use JSON_RPC server using default Python libraries. """
+
+    do_POST = JSON_RPC_Base.handle_request
+
+    def log_request(self, code, size=None):
+        '''Overriden method from BaseHTTPRequestHandler to reduce logmessages'''
+
+    def get_request_string(self):
+        return "<{0} {1} {2}>".format(self.command, self.path, self.request_version)
+
+    def read_data(self):
+        length = int(self.headers.getheader('content-length'))
+        return self.rfile.read(length)
+
+    def write_data(self, code, result):
+        self.send_response(code)
+        self.send_header("content-type", 'application/json')
+        self.send_header("content-length", len(result))
+        self.end_headers()
+        self.wfile.write(result)
+
